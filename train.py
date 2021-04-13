@@ -16,7 +16,6 @@ import torch.backends.cudnn as cudnn
 
 import transforms
 from eval_model import *
-from models.LoadModel import MainModel
 from dataset_DCL import collate_fn4train, collate_fn4val, collate_fn4test, collate_fn4backbone, dataset
 from utils import *
 import pdb
@@ -24,56 +23,25 @@ import pdb
 os.environ['CUDA_DEVICE_ORDRE'] = 'PCI_BUS_ID'
 os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 
-
-# parameters setting
-def parse_args():
-    parser = argparse.ArgumentParser(description='dcl parameters')
-    parser.add_argument('--data', dest='dataset',
-                        default='CUB', type=str)
-    parser.add_argument('--save', dest='resume',
-                        default=None,
-                        type=str)
-    parser.add_argument('--backbone', dest='backbone',
-                        default='resnet50', type=str)
-    parser.add_argument('--auto_resume', dest='auto_resume',
-                        action='store_true')
-    parser.add_argument('--epoch', dest='epoch',
-                        default=360, type=int)
-    parser.add_argument('--tb', dest='train_batch',
-                        default=16, type=int)
-    parser.add_argument('--vb', dest='val_batch',
-                        default=512, type=int)
-    parser.add_argument('--sp', dest='save_point',
-                        default=5000, type=int)
-    parser.add_argument('--cp', dest='check_point',
-                        default=5000, type=int)
-    parser.add_argument('--lr', dest='base_lr',
-                        default=0.0008, type=float)
-    parser.add_argument('--lr_step', dest='decay_step',
-                        default=60, type=int)
-    parser.add_argument('--cls_lr_ratio', dest='cls_lr_ratio',
-                        default=10.0, type=float)
-    parser.add_argument('--start_epoch', dest='start_epoch',
-                        default=0, type=int)
-    parser.add_argument('--tnw', dest='train_num_workers',
-                        default=16, type=int)
-    parser.add_argument('--vnw', dest='val_num_workers',
-                        default=32, type=int)
-    parser.add_argument('--detail', dest='discribe',
-                        default='', type=str)
-    parser.add_argument('--size', dest='resize_resolution',
-                        default=512, type=int)
-    parser.add_argument('--crop', dest='crop_resolution',
-                        default=448, type=int)
-    parser.add_argument('--cls_2', dest='cls_2',
-                        action='store_true')
-    parser.add_argument('--cls_mul', dest='cls_mul',
-                        action='store_true')
-    parser.add_argument('--swap_num', default=[7, 7],
-                        nargs=2, metavar=('swap1', 'swap2'),
-                        type=int, help='specify a range')
-    args = parser.parse_args()
-    return args
+data = 'STCAR'
+resume = None
+backbone = 'resnet50'
+epoch = 360
+train_batch = 8
+val_batch = 8
+save_point = 5000
+check_point = 5000
+base_lr = 0.0008
+decay_step = 60
+cls_lr_ratio = 10.0
+start_epoch = 0
+train_num_workers = 8
+val_num_workers = 8
+discribe = 'training_descibe'
+resize_resolution = 512
+crop_resolution = 448
+swap_num = [7, 7]
+auto_resume = False
 
 
 def auto_load_resume(load_dir):
@@ -127,7 +95,7 @@ def load_data_transformers(resize_reso=512, crop_reso=448, swap_num=[7, 7]):
 
 
 class LoadConfig(object):
-    def __init__(self, args, version):
+    def __init__(self, version):
         if version == 'train':
             get_list = ['train', 'val']
         elif version == 'val':
@@ -144,28 +112,10 @@ class LoadConfig(object):
         # put image data in $PATH/data
         # put annotation txt file in $PATH/anno
 
-        if args.dataset == 'product':
-            self.dataset = args.dataset
-            self.rawdata_root = './../FGVC_product/data'
-            self.anno_root = './../FGVC_product/anno'
-            self.numcls = 2019
-        elif args.dataset == 'CUB':
-            self.dataset = args.dataset
-            self.rawdata_root = './dataset/CUB_200_2011/data'
-            self.anno_root = './dataset/CUB_200_2011/anno'
-            self.numcls = 200
-        elif args.dataset == 'STCAR':
-            self.dataset = args.dataset
-            self.rawdata_root = './dataset/st_car/data'
-            self.anno_root = './dataset/st_car/anno'
-            self.numcls = 196
-        elif args.dataset == 'AIR':
-            self.dataset = args.dataset
-            self.rawdata_root = './dataset/aircraft/data'
-            self.anno_root = './dataset/aircraft/anno'
-            self.numcls = 100
-        else:
-            raise Exception('dataset not defined ???')
+        self.dataset = 'STCAR'
+        self.rawdata_root = './dataset/st_car/data'
+        self.anno_root = './dataset/st_car/anno'
+        self.numcls = 196
 
         # annotation file organized as :
         # path/image_name cls_num\n
@@ -188,12 +138,12 @@ class LoadConfig(object):
                                          header=None, \
                                          names=['ImageName', 'label'])
 
-        self.swap_num = args.swap_num
+        self.swap_num = swap_num
 
         self.save_dir = './net_model'
         if not os.path.exists(self.save_dir):
             os.mkdir(self.save_dir)
-        self.backbone = args.backbone
+        self.backbone = 'resnet50'
 
         self.use_dcl = True
         self.use_backbone = False if self.use_dcl else True
@@ -204,22 +154,63 @@ class LoadConfig(object):
 
         self.weighted_sample = False
         self.cls_2 = True
-        self.cls_2xmul = False
+        self.cls_2xmul = True
 
         self.log_folder = './logs'
         if not os.path.exists(self.log_folder):
             os.mkdir(self.log_folder)
 
 
+class MainModel(nn.Module):
+    def __init__(self, config):
+        super(MainModel, self).__init__()
+        self.use_dcl = config.use_dcl
+        self.num_classes = config.numcls
+        self.backbone_arch = config.backbone
+        self.use_Asoftmax = config.use_Asoftmax
+        print(self.backbone_arch)
+
+        self.model = pretrainedmodels.__dict__[self.backbone_arch](num_classes=1000, pretrained=None)
+
+        self.model = nn.Sequential(*list(self.model.children())[:-2])
+
+        self.avgpool = nn.AdaptiveAvgPool2d(output_size=1)
+        self.classifier = nn.Linear(2048, self.num_classes, bias=False)
+
+        if self.use_dcl:
+            if config.cls_2:
+                self.classifier_swap = nn.Linear(2048, 2, bias=False)
+            if config.cls_2xmul:
+                self.classifier_swap = nn.Linear(2048, 2 * self.num_classes, bias=False)
+            self.Convmask = nn.Conv2d(2048, 1, 1, stride=1, padding=0, bias=True)
+            self.avgpool2 = nn.AvgPool2d(2, stride=2)
+
+    def forward(self, x, last_cont=None):
+        x = self.model(x)
+        if self.use_dcl:
+            mask = self.Convmask(x)
+            mask = self.avgpool2(mask)
+            mask = torch.tanh(mask)
+            mask = mask.view(mask.size(0), -1)
+
+        x = self.avgpool(x)
+        x = x.view(x.size(0), -1)
+        out = []
+        out.append(self.classifier(x))
+
+        if self.use_dcl:
+            out.append(self.classifier_swap(x))
+            out.append(mask)
+
+        return out
+
+
 if __name__ == '__main__':
-    args = parse_args()
-    print(args)
-    Config = LoadConfig(args, 'train')
-    Config.cls_2 = args.cls_2
-    Config.cls_2xmul = args.cls_mul
+
+    Config = LoadConfig('train')
     assert Config.cls_2 ^ Config.cls_2xmul
 
-    transformers = load_data_transformers(args.resize_resolution, args.crop_resolution, args.swap_num)
+    transformers = load_data_transformers(resize_resolution, crop_resolution, swap_num)
 
     # inital dataloader
     train_set = dataset(Config=Config, \
@@ -246,9 +237,9 @@ if __name__ == '__main__':
 
     dataloader = {}
     dataloader['train'] = torch.utils.data.DataLoader(train_set, \
-                                                      batch_size=args.train_batch, \
+                                                      batch_size=train_batch, \
                                                       shuffle=True, \
-                                                      num_workers=args.train_num_workers, \
+                                                      num_workers=train_num_workers, \
                                                       collate_fn=collate_fn4train if not Config.use_backbone else collate_fn4backbone,
                                                       drop_last=True if Config.use_backbone else False,
                                                       pin_memory=True)
@@ -256,9 +247,9 @@ if __name__ == '__main__':
     setattr(dataloader['train'], 'total_item_len', len(train_set))
 
     dataloader['trainval'] = torch.utils.data.DataLoader(trainval_set, \
-                                                         batch_size=args.val_batch, \
+                                                         batch_size=val_batch, \
                                                          shuffle=False, \
-                                                         num_workers=args.val_num_workers, \
+                                                         num_workers=val_num_workers, \
                                                          collate_fn=collate_fn4val if not Config.use_backbone else collate_fn4backbone,
                                                          drop_last=True if Config.use_backbone else False,
                                                          pin_memory=True)
@@ -267,9 +258,9 @@ if __name__ == '__main__':
     setattr(dataloader['trainval'], 'num_cls', Config.numcls)
 
     dataloader['val'] = torch.utils.data.DataLoader(val_set, \
-                                                    batch_size=args.val_batch, \
+                                                    batch_size=val_batch, \
                                                     shuffle=False, \
-                                                    num_workers=args.val_num_workers, \
+                                                    num_workers=val_num_workers, \
                                                     collate_fn=collate_fn4test if not Config.use_backbone else collate_fn4backbone,
                                                     drop_last=True if Config.use_backbone else False,
                                                     pin_memory=True)
@@ -283,13 +274,13 @@ if __name__ == '__main__':
     model = MainModel(Config)
 
     # load model
-    if (args.resume is None) and (not args.auto_resume):
+    if (resume is None) and (not auto_resume):
         print('train from imagenet pretrained models ...', flush=True)
     else:
-        if not args.resume is None:
-            resume = args.resume
+        if not resume is None:
+            resume = resume
             print('load from pretrained checkpoint %s ...' % resume, flush=True)
-        elif args.auto_resume:
+        elif auto_resume:
             resume = auto_load_resume(Config.save_dir)
             print('load from %s ...' % resume)
         else:
@@ -303,7 +294,7 @@ if __name__ == '__main__':
 
     print('Set cache dir')
     time = datetime.datetime.now()
-    filename = '%s_%d%d%d_%s' % (args.discribe, time.month, time.day, time.hour, Config.dataset)
+    filename = '%s_%d%d%d_%s' % (discribe, time.month, time.day, time.hour, Config.dataset)
     save_dir = os.path.join(Config.save_dir, filename)
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -323,8 +314,8 @@ if __name__ == '__main__':
     print('the num of new layers:', len(ignored_params))
     base_params = filter(lambda p: id(p) not in ignored_params, model.module.parameters())
 
-    lr_ratio = args.cls_lr_ratio
-    base_lr = args.base_lr
+    lr_ratio = cls_lr_ratio
+    base_lr = base_lr
     if Config.use_backbone:
         optimizer = optim.SGD([{'params': base_params},
                                {'params': model.module.classifier.parameters(), 'lr': base_lr}], lr=base_lr,
@@ -336,19 +327,19 @@ if __name__ == '__main__':
                                {'params': model.module.Convmask.parameters(), 'lr': lr_ratio * base_lr},
                                ], lr=base_lr, momentum=0.9)
 
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=args.decay_step, gamma=0.1)
+    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=decay_step, gamma=0.1)
 
     # train entry
 
-    epoch_num = args.epoch
-    start_epoch = args.start_epoch
+    epoch_num = epoch
+    start_epoch = start_epoch
     optimizer = optimizer
     exp_lr_scheduler = exp_lr_scheduler
     data_loader = dataloader
     save_dir = save_dir
-    data_size = args.crop_resolution
-    savepoint = args.save_point
-    checkpoint = args.check_point
+    data_size = crop_resolution
+    savepoint = save_point
+    checkpoint = check_point
 
     step = 0
     eval_train_flag = False
