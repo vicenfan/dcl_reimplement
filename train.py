@@ -19,7 +19,7 @@ from eval_model import *
 from dataset_DCL import collate_fn4train, collate_fn4val, collate_fn4test, collate_fn4backbone, dataset
 from utils import *
 import pdb
-from resnet_dcl import resnet50_dcl
+from dcl_model import DCLModel
 os.environ['CUDA_DEVICE_ORDRE'] = 'PCI_BUS_ID'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
@@ -94,7 +94,7 @@ def load_data_transformers(resize_reso=512, crop_reso=448, swap_num=[7, 7]):
     return data_transforms
 
 
-class Config(object):
+class LoadConfig(object):
     def __init__(self, version):
         if version == 'train':
             get_list = ['train', 'val']
@@ -141,8 +141,7 @@ class Config(object):
 
 if __name__ == '__main__':
 
-    Config = Config('train')
-    assert Config.cls_2 ^ Config.cls_2xmul
+    Config = LoadConfig('train')
 
     transformers = load_data_transformers(resize_resolution, crop_resolution, swap_num)
 
@@ -174,8 +173,8 @@ if __name__ == '__main__':
                                                       batch_size=train_batch, \
                                                       shuffle=True, \
                                                       num_workers=train_num_workers, \
-                                                      collate_fn=collate_fn4train if not Config.use_backbone else collate_fn4backbone,
-                                                      drop_last=True if Config.use_backbone else False,
+                                                      collate_fn=collate_fn4train,
+                                                      drop_last=False,
                                                       pin_memory=True)
 
     setattr(dataloader['train'], 'total_item_len', len(train_set))
@@ -184,8 +183,8 @@ if __name__ == '__main__':
                                                          batch_size=val_batch, \
                                                          shuffle=False, \
                                                          num_workers=val_num_workers, \
-                                                         collate_fn=collate_fn4val if not Config.use_backbone else collate_fn4backbone,
-                                                         drop_last=True if Config.use_backbone else False,
+                                                         collate_fn=collate_fn4val,
+                                                         drop_last=False,
                                                          pin_memory=True)
 
     setattr(dataloader['trainval'], 'total_item_len', len(trainval_set))
@@ -195,8 +194,8 @@ if __name__ == '__main__':
                                                     batch_size=val_batch, \
                                                     shuffle=False, \
                                                     num_workers=val_num_workers, \
-                                                    collate_fn=collate_fn4test if not Config.use_backbone else collate_fn4backbone,
-                                                    drop_last=True if Config.use_backbone else False,
+                                                    collate_fn=collate_fn4test,
+                                                    drop_last=False,
                                                     pin_memory=True)
 
     setattr(dataloader['val'], 'total_item_len', len(val_set))
@@ -205,7 +204,7 @@ if __name__ == '__main__':
     cudnn.benchmark = True
 
     print('Choose model and train set', flush=True)
-    model = resnet50_dcl(pretrained=True)
+    model = DCLModel(Config)
 
     # load model
 
@@ -281,13 +280,12 @@ if __name__ == '__main__':
             loss = 0
             model.train(True)
 
-            if Config.use_dcl:
-                inputs, labels, labels_swap, swap_law, img_names = data
-                print(data)
-                inputs = inputs.cuda()
-                labels = torch.from_numpy(np.array(labels)).cuda()
-                labels_swap = torch.from_numpy(np.array(labels_swap)).cuda()
-                swap_law = torch.from_numpy(np.array(swap_law)).float().cuda()
+            inputs, labels, labels_swap, swap_law, img_names = data
+            print(data)
+            inputs = inputs.cuda()
+            labels = torch.from_numpy(np.array(labels)).cuda()
+            labels_swap = torch.from_numpy(np.array(labels_swap)).cuda()
+            swap_law = torch.from_numpy(np.array(swap_law)).float().cuda()
 
             optimizer.zero_grad()
 
@@ -305,11 +303,10 @@ if __name__ == '__main__':
             alpha_ = 1
             beta_ = 1
             gamma_ = 0.01
-            if Config.use_dcl:
-                swap_loss = get_ce_loss(outputs[1], labels_swap) * beta_
-                loss += swap_loss
-                law_loss = add_loss(outputs[2], swap_law) * gamma_
-                loss += law_loss
+            swap_loss = get_ce_loss(outputs[1], labels_swap) * beta_
+            loss += swap_loss
+            law_loss = add_loss(outputs[2], swap_law) * gamma_
+            loss += law_loss
 
             loss.backward()
             torch.cuda.synchronize()
@@ -317,17 +314,11 @@ if __name__ == '__main__':
             optimizer.step()
             torch.cuda.synchronize()
 
-            if Config.use_dcl:
-                print(
-                    'step: {:-8d} / {:d} loss=ce_loss+swap_loss+law_loss: {:6.4f} = {:6.4f} + {:6.4f} + {:6.4f} '.format(
-                        step, train_epoch_step, loss.detach().item(), ce_loss.detach().item(),
-                        swap_loss.detach().item(), law_loss.detach().item()), flush=True)
-            if Config.use_backbone:
-                print('step: {:-8d} / {:d} loss=ce_loss+swap_loss+law_loss: {:6.4f} = {:6.4f} '.format(step,
-                                                                                                       train_epoch_step,
-                                                                                                       loss.detach().item(),
-                                                                                                       ce_loss.detach().item()),
-                      flush=True)
+            # print(
+            #     'step: {:-8d} / {:d} loss=ce_loss+swap_loss+law_loss: {:6.4f} = {:6.4f} + {:6.4f} + {:6.4f} '.format(
+            #         step, train_epoch_step, loss.detach().item(), ce_loss.detach().item(),
+            #         swap_loss.detach().item(), law_loss.detach().item()), flush=True)
+
             rec_loss.append(loss.detach().item())
 
             train_loss_recorder.update(loss.detach().item())
@@ -355,7 +346,7 @@ if __name__ == '__main__':
                                          'weights_%d_%d_%.4f_%.4f.pth' % (epoch, batch_cnt, val_acc1, val_acc3))
                 torch.cuda.synchronize()
                 # torch.save(model.state_dict(), save_path)
-                print('saved model to %s' % (save_path), flush=True)
+                # print('saved model to %s' % (save_path), flush=True)
                 torch.cuda.empty_cache()
 
             # save only

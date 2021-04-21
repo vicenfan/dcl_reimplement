@@ -1,9 +1,8 @@
-import torch
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 
 
-__all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50_dcl', 'resnet101',
+__all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152']
 
 
@@ -111,12 +110,9 @@ class ResNet(nn.Module):
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
-        self.avgpool = nn.AdaptiveAvgPool2d(output_size=1)
-        self.classifier = nn.Linear(2048, self.num_classes, bias=False)
-        self.classifier_swap = nn.Linear(2048, 2, bias=False)
-        self.Convmask = nn.Conv2d(2048, 1, 1, stride=1, padding=0, bias=True)
-        self.avgpool2 = nn.AvgPool2d(2, stride=2)
+
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
@@ -161,17 +157,11 @@ class ResNet(nn.Module):
         x = self.layer3(x)
         x = self.layer4(x)
 
-        mask = self.Convmask(x)
-        mask = self.avgpool2(mask)
-        mask = torch.tanh(mask)
-        mask = mask.view(mask.size(0), -1)
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
-        out = []
-        out.append(self.classifier(x))
-        out.append(self.classifier_swap(x))
-        out.append(mask)
-        return out
+        x = self.fc(x)
+
+        return x
 
 
 def resnet18(pretrained=False, **kwargs):
@@ -198,7 +188,7 @@ def resnet34(pretrained=False, **kwargs):
     return model
 
 
-def resnet50_dcl(pretrained=False, **kwargs):
+def resnet50(pretrained=False, **kwargs):
     """Constructs a ResNet-50 model.
 
     Args:
