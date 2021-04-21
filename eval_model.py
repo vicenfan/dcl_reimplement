@@ -50,10 +50,7 @@ def eval_turn(Config, model, data_loader, val_version, epoch_num, log_file):
             val_loss_recorder.update(loss)
             val_celoss_recorder.update(ce_loss)
 
-            if Config.use_dcl and Config.cls_2xmul:
-                outputs_pred = outputs[0] + outputs[1][:,0:num_cls] + outputs[1][:,num_cls:2*num_cls]
-            else:
-                outputs_pred = outputs[0]
+            outputs_pred = outputs[0] + outputs[1][:,0:num_cls] + outputs[1][:,num_cls:2*num_cls]
             top3_val, top3_pos = torch.topk(outputs_pred, 3)
 
             print('{:s} eval_batch: {:-6d} / {:d} loss: {:8.4f}'.format(val_version, batch_cnt_val, val_epoch_step, loss), flush=True)

@@ -21,22 +21,22 @@ from utils import *
 import pdb
 from dcl_model import DCLModel
 os.environ['CUDA_DEVICE_ORDRE'] = 'PCI_BUS_ID'
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2'
 
 data = 'STCAR'
 resume = None
 backbone = 'resnet50'
 epoch = 360
-train_batch = 8
-val_batch = 8
+train_batch = 16
+val_batch = 16
 save_point = 5000
 check_point = 5000
 base_lr = 0.0008
 decay_step = 60
 cls_lr_ratio = 10.0
 start_epoch = 0
-train_num_workers = 8
-val_num_workers = 8
+train_num_workers = 4
+val_num_workers = 4
 discribe = 'training_descibe'
 resize_resolution = 512
 crop_resolution = 448
@@ -106,8 +106,8 @@ class LoadConfig(object):
             raise Exception("train/val/test ???\n")
 
         self.dataset = 'STCAR'
-        self.rawdata_root = './dataset/st_car/data'
-        self.anno_root = './dataset/st_car/anno'
+        self.rawdata_root = '/data3/dutmm/ycy/DCL/dataset/st_car/data'
+        self.anno_root = '/data3/dutmm/ycy/DCL/dataset/st_car/anno'
         self.numcls = 196
 
         if 'train' in get_list:
@@ -281,7 +281,6 @@ if __name__ == '__main__':
             model.train(True)
 
             inputs, labels, labels_swap, swap_law, img_names = data
-            print(data)
             inputs = inputs.cuda()
             labels = torch.from_numpy(np.array(labels)).cuda()
             labels_swap = torch.from_numpy(np.array(labels_swap)).cuda()
@@ -293,7 +292,7 @@ if __name__ == '__main__':
                 outputs = model(inputs, inputs[0:-1:2])
 
             else:
-                outputs = model(inputs, None)
+                outputs = model(inputs)
                 # print(outputs.shape)
 
             ce_loss = get_ce_loss(outputs[0], labels)

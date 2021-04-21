@@ -34,8 +34,7 @@ class dataset(data.Dataset):
         self.root_path = Config.rawdata_root
         self.numcls = Config.numcls
         self.dataset = Config.dataset
-        self.use_cls_2 = Config.cls_2
-        self.use_cls_mul = Config.cls_2xmul
+        self.use_cls_mul = True
         if isinstance(anno, pandas.core.frame.DataFrame):
             self.paths = anno['ImageName'].tolist()
             self.labels = [int(x)-1 for x in anno['label'].tolist()]
@@ -84,8 +83,7 @@ class dataset(data.Dataset):
             label = self.labels[item]
             if self.use_cls_mul:
                 label_swap = label + self.numcls
-            if self.use_cls_2:
-                label_swap = -1
+
             img_unswap = self.totensor(img_unswap)
             return img_unswap, img_swap, label, label_swap, swap_law1, swap_law2, self.paths[item]
         else:

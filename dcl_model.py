@@ -10,7 +10,6 @@ class DCLModel(nn.Module):
     def __init__(self, config):
         super(DCLModel, self).__init__()
         self.num_classes = config.numcls
-        print(self.backbone_arch)
 
         self.model=resnet50(pretrained=True)
 
