@@ -19,9 +19,9 @@ from eval_model import *
 from dataset_DCL import collate_fn4train, collate_fn4val, collate_fn4test, collate_fn4backbone, dataset
 from utils import *
 import pdb
-
+from resnet_dcl import resnet50_dcl
 os.environ['CUDA_DEVICE_ORDRE'] = 'PCI_BUS_ID'
-os.environ['CUDA_VISIBLE_DEVICES'] = '3'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 data = 'STCAR'
 resume = None
@@ -94,7 +94,7 @@ def load_data_transformers(resize_reso=512, crop_reso=448, swap_num=[7, 7]):
     return data_transforms
 
 
-class LoadConfig(object):
+class Config(object):
     def __init__(self, version):
         if version == 'train':
             get_list = ['train', 'val']
@@ -105,20 +105,10 @@ class LoadConfig(object):
         else:
             raise Exception("train/val/test ???\n")
 
-        ###############################
-        #### add dataset info here ####
-        ###############################
-
-        # put image data in $PATH/data
-        # put annotation txt file in $PATH/anno
-
         self.dataset = 'STCAR'
         self.rawdata_root = './dataset/st_car/data'
         self.anno_root = './dataset/st_car/anno'
         self.numcls = 196
-
-        # annotation file organized as :
-        # path/image_name cls_num\n
 
         if 'train' in get_list:
             self.train_anno = pd.read_csv(os.path.join(self.anno_root, 'ct_train.txt'), \
@@ -143,71 +133,15 @@ class LoadConfig(object):
         self.save_dir = './net_model'
         if not os.path.exists(self.save_dir):
             os.mkdir(self.save_dir)
-        self.backbone = 'resnet50'
-
-        self.use_dcl = True
-        self.use_backbone = False if self.use_dcl else True
-        self.use_Asoftmax = False
-        self.use_focal_loss = False
-        self.use_fpn = False
-        self.use_hier = False
-
-        self.weighted_sample = False
-        self.cls_2 = True
-        self.cls_2xmul = True
 
         self.log_folder = './logs'
         if not os.path.exists(self.log_folder):
             os.mkdir(self.log_folder)
 
 
-class MainModel(nn.Module):
-    def __init__(self, config):
-        super(MainModel, self).__init__()
-        self.use_dcl = config.use_dcl
-        self.num_classes = config.numcls
-        self.backbone_arch = config.backbone
-        self.use_Asoftmax = config.use_Asoftmax
-        print(self.backbone_arch)
-
-        self.model = pretrainedmodels.__dict__[self.backbone_arch](num_classes=1000, pretrained=None)
-
-        self.model = nn.Sequential(*list(self.model.children())[:-2])
-
-        self.avgpool = nn.AdaptiveAvgPool2d(output_size=1)
-        self.classifier = nn.Linear(2048, self.num_classes, bias=False)
-
-        if self.use_dcl:
-            if config.cls_2:
-                self.classifier_swap = nn.Linear(2048, 2, bias=False)
-            if config.cls_2xmul:
-                self.classifier_swap = nn.Linear(2048, 2 * self.num_classes, bias=False)
-            self.Convmask = nn.Conv2d(2048, 1, 1, stride=1, padding=0, bias=True)
-            self.avgpool2 = nn.AvgPool2d(2, stride=2)
-
-    def forward(self, x, last_cont=None):
-        x = self.model(x)
-        if self.use_dcl:
-            mask = self.Convmask(x)
-            mask = self.avgpool2(mask)
-            mask = torch.tanh(mask)
-            mask = mask.view(mask.size(0), -1)
-
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        out = []
-        out.append(self.classifier(x))
-
-        if self.use_dcl:
-            out.append(self.classifier_swap(x))
-            out.append(mask)
-
-        return out
-
-
 if __name__ == '__main__':
 
-    Config = LoadConfig('train')
+    Config = Config('train')
     assert Config.cls_2 ^ Config.cls_2xmul
 
     transformers = load_data_transformers(resize_resolution, crop_resolution, swap_num)
@@ -271,26 +205,9 @@ if __name__ == '__main__':
     cudnn.benchmark = True
 
     print('Choose model and train set', flush=True)
-    model = MainModel(Config)
+    model = resnet50_dcl(pretrained=True)
 
     # load model
-    if (resume is None) and (not auto_resume):
-        print('train from imagenet pretrained models ...', flush=True)
-    else:
-        if not resume is None:
-            resume = resume
-            print('load from pretrained checkpoint %s ...' % resume, flush=True)
-        elif auto_resume:
-            resume = auto_load_resume(Config.save_dir)
-            print('load from %s ...' % resume)
-        else:
-            raise Exception("no checkpoints to load")
-
-        model_dict = model.state_dict()
-        pretrained_dict = torch.load(resume)
-        pretrained_dict = {k[7:]: v for k, v in pretrained_dict.items() if k[7:] in model_dict}
-        model_dict.update(pretrained_dict)
-        model.load_state_dict(model_dict)
 
     print('Set cache dir')
     time = datetime.datetime.now()
@@ -303,29 +220,22 @@ if __name__ == '__main__':
     model = nn.DataParallel(model)
 
     # optimizer prepare
-    if Config.use_backbone:
-        ignored_params = list(map(id, model.module.classifier.parameters()))
-    else:
-        ignored_params1 = list(map(id, model.module.classifier.parameters()))
-        ignored_params2 = list(map(id, model.module.classifier_swap.parameters()))
-        ignored_params3 = list(map(id, model.module.Convmask.parameters()))
+    ignored_params1 = list(map(id, model.module.classifier.parameters()))
+    ignored_params2 = list(map(id, model.module.classifier_swap.parameters()))
+    ignored_params3 = list(map(id, model.module.Convmask.parameters()))
 
-        ignored_params = ignored_params1 + ignored_params2 + ignored_params3
+    ignored_params = ignored_params1 + ignored_params2 + ignored_params3
     print('the num of new layers:', len(ignored_params))
     base_params = filter(lambda p: id(p) not in ignored_params, model.module.parameters())
 
     lr_ratio = cls_lr_ratio
     base_lr = base_lr
-    if Config.use_backbone:
-        optimizer = optim.SGD([{'params': base_params},
-                               {'params': model.module.classifier.parameters(), 'lr': base_lr}], lr=base_lr,
-                              momentum=0.9)
-    else:
-        optimizer = optim.SGD([{'params': base_params},
-                               {'params': model.module.classifier.parameters(), 'lr': lr_ratio * base_lr},
-                               {'params': model.module.classifier_swap.parameters(), 'lr': lr_ratio * base_lr},
-                               {'params': model.module.Convmask.parameters(), 'lr': lr_ratio * base_lr},
-                               ], lr=base_lr, momentum=0.9)
+
+    optimizer = optim.SGD([{'params': base_params},
+                           {'params': model.module.classifier.parameters(), 'lr': lr_ratio * base_lr},
+                           {'params': model.module.classifier_swap.parameters(), 'lr': lr_ratio * base_lr},
+                           {'params': model.module.Convmask.parameters(), 'lr': lr_ratio * base_lr},
+                           ], lr=base_lr, momentum=0.9)
 
     exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=decay_step, gamma=0.1)
 
