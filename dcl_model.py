@@ -5,7 +5,7 @@ from torchvision import models, transforms, datasets
 import torch.nn.functional as F
 import pdb
 from resnet import *
-
+from NLB import NLBlockND
 class DCLModel(nn.Module):
     def __init__(self, config):
         super(DCLModel, self).__init__()
@@ -24,6 +24,11 @@ class DCLModel(nn.Module):
 
     def forward(self, x):
         x = self.model(x)
+        # x = self.model(x)
+        # NLBlock = NLBlockND(2048, dimension=2)
+        # NLBlock = NLBlock.cuda()
+        # x = NLBlock(x)
+
         mask = self.Convmask(x)
         mask = self.avgpool2(mask)
         mask = torch.tanh(mask)
@@ -31,6 +36,8 @@ class DCLModel(nn.Module):
 
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
+        # NLB_1 = NLBlockND(2048, dimension=2).cuda()
+        # x = NLB_1(x)
         out = []
         out.append(self.classifier(x))
         out.append(self.classifier_swap(x))
